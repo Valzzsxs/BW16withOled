@@ -15,7 +15,9 @@ jobs:
       - name: Install Arduino CLI
         run: |
           mkdir -p "$HOME/bin"
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh -s -- -b "$HOME/bin"
+          curl -fL https://github.com/arduino/arduino-cli/releases/download/v1.5.1/arduino-cli_1.5.1_Linux_64bit.tar.gz -o /tmp/arduino-cli.tar.gz
+          tar -xzf /tmp/arduino-cli.tar.gz -C "$HOME/bin" arduino-cli
+          chmod +x "$HOME/bin/arduino-cli"
           echo "$HOME/bin" >> "$GITHUB_PATH"
           "$HOME/bin/arduino-cli" version
 
