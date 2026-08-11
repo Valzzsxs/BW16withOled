@@ -1,0 +1,38 @@
+name: Build BW16 Firmware
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build firmware
+        run: pio run -e bw16_oled
+
+      - name: Upload firmware artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BW16withOled-firmware
+          path: .pio/build/bw16_oled/firmware.bin
+          if-no-files-found: error
+
+      - name: Upload all build files
+        uses: actions/upload-artifact@v4
+        with:
+          name: BW16withOled-build
+          path: .pio/build/bw16_oled/
+          if-no-files-found: error
