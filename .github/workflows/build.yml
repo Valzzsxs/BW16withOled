@@ -9,30 +9,60 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout firmware
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.x'
+      - name: Install Arduino CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | sh
+          echo "$HOME/bin" >> "$GITHUB_PATH"
 
-      - name: Install PlatformIO
-        run: pip install platformio
+      - name: Configure Arduino CLI
+        run: |
+          arduino-cli config init
+          arduino-cli config set library.enable_unsafe_install true
+          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/Ameba-AIoT/ameba-arduino-d/dev/Arduino_package/package_realtek.com_amebad_early_index.json
+          arduino-cli core update-index
 
-      - name: Build firmware
-        run: pio run -e bw16_oled
+      - name: Install Realtek AmebaD core
+        run: |
+          arduino-cli core install realtek:AmebaD@3.1.7-build20240216
 
-      - name: Upload firmware artifact
+      - name: Install libraries
+        run: |
+          arduino-cli lib install U8g2
+          arduino-cli lib install ArduinoJson@6.21.5
+
+      - name: Verify BW16 board
+        run: |
+          arduino-cli board listall | grep -i 'BW16 (RTL8720DN)'
+          arduino-cli core list
+
+      - name: Compile BW16 firmware
+        run: |
+          mkdir -p build
+          arduino-cli compile \
+            --fqbn realtek:AmebaD:BW16 \
+            --output-dir build \
+            --export-binaries \
+            --warnings all \
+            .
+
+      - name: Show generated files
+        run: |
+          find build -maxdepth 2 -type f -printf '%p %s bytes\n'
+          test -n "$(find build -maxdepth 1 -type f -name '*.bin' -print -quit)"
+
+      - name: Upload BW16 firmware
         uses: actions/upload-artifact@v4
         with:
           name: BW16withOled-firmware
-          path: .pio/build/bw16_oled/firmware.bin
+          path: build/*.bin
           if-no-files-found: error
 
-      - name: Upload all build files
+      - name: Upload complete build output
         uses: actions/upload-artifact@v4
         with:
           name: BW16withOled-build
-          path: .pio/build/bw16_oled/
+          path: build/
           if-no-files-found: error
